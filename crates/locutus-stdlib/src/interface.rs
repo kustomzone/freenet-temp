@@ -36,7 +36,7 @@ impl<'a> State<'a> {
         self.0.len()
     }
 
-    pub fn into_owned(self) -> Vec<u8> {
+    pub fn binto_owned(self) -> Vec<u8> {
         self.0.into_owned()
     }
 

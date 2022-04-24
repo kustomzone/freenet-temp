@@ -45,7 +45,7 @@ impl ContractInterface for Contract {
     ) -> Result<UpdateModification, ContractError> {
         // TOOD: Not sure if this is the right way to mutate state
         let delta : PDelta = _delta.into_owned().as_slice().into();
-        let mut state : PState = state.into_owned().as_slice().into();
+        let mut state : PState = state.as_mut().to_owned().into();
         state.entries.extend(delta.entries);
         let state : Vec<u8> = state.into();
         let state = State::from(state);
