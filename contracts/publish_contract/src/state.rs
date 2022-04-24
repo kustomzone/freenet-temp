@@ -8,10 +8,6 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(serialized : &[u8]) -> Self {
-        rmps::from_slice(serialized).unwrap()
-    }
-
     pub fn verify_with_public_key(&self, public_key: &RsaPublicKey) -> bool {
         for (i, entry) in self.entries.iter().enumerate() {
             if i as u32 != entry.get_content().index {
@@ -19,6 +15,12 @@ impl State {
             }
         }
         self.entries.iter().all(|entry| entry.verify_with_public_key(public_key))
+    }
+}
+
+impl From<&[u8]> for State {
+    fn from(serialized : &[u8]) -> Self {
+        rmps::from_slice(serialized).unwrap()
     }
 }
 

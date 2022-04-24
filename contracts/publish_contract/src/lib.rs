@@ -1,6 +1,7 @@
 use locutus_stdlib::prelude::*;
 use state::State as PState;
 use parameters::Parameters as PParameters;
+use delta::Delta as PDelta;
 
 mod state;
 mod parameters;
@@ -16,14 +17,25 @@ struct Contract;
 
 #[contract]
 impl ContractInterface for Contract {
-    fn validate_state(_parameters: Parameters<'static>, state: State<'static>) -> bool {
-        let state : PState = rmps::from_slice(state.into_owned().as_slice()).unwrap();
-        let parameters : PParameters = rmps::from_slice(_parameters.as_ref()).unwrap();
+    fn validate_state(parameters: Parameters<'static>, state: State<'static>) -> bool {
+        let state : PState = state.into_owned().as_slice().into();
+        let parameters : PParameters = parameters.as_ref().into();
         state.verify_with_public_key(&parameters.public_key)
     }
 
-    fn validate_delta(_parameters: Parameters<'static>, _delta: StateDelta<'static>) -> bool {
-        unimplemented!()
+    fn validate_delta(parameters: Parameters<'static>, _delta: StateDelta<'static>) -> bool {
+        let delta : PDelta = _delta.into_owned().as_slice().into();
+        if delta.entries.is_empty() {
+            // There is no point in an empty delta
+            return false;
+        }
+        let parameters : PParameters = parameters.as_ref().into();
+        for entry in delta.entries.iter() {
+            if !entry.verify_with_public_key(&parameters.public_key) {
+                return false;
+            }
+        }
+        return true;
     }
 
     fn update_state(
@@ -31,9 +43,13 @@ impl ContractInterface for Contract {
         mut state: State<'static>,
         _delta: StateDelta<'static>,
     ) -> Result<UpdateModification, ContractError> {
-        let new_state = state.to_mut();
-        new_state.extend([1, 2, 3]);
-        Ok(UpdateModification::ValidUpdate(state))
+        // TOOD: Not sure if this is the right way to mutate state
+        let delta : PDelta = _delta.into_owned().as_slice().into();
+        let mut state : PState = state.into_owned().as_slice().into();
+        state.entries.extend(delta.entries);
+        let state : Vec<u8> = state.into();
+        let state = State::from(state);
+        return Result::Ok(UpdateModification::ValidUpdate(state));
     }
 
     fn summarize_state(
