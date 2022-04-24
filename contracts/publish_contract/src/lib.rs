@@ -18,7 +18,7 @@ struct Contract;
 #[contract]
 impl ContractInterface for Contract {
     fn validate_state(parameters: Parameters<'static>, state: State<'static>) -> bool {
-        let state : PState = state.into_owned().as_slice().into();
+        let state : PState = state.into_owned().into();
         let parameters : PParameters = parameters.as_ref().into();
         state.verify_with_public_key(&parameters.public_key)
     }

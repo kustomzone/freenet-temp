@@ -24,6 +24,12 @@ impl From<&[u8]> for State {
     }
 }
 
+impl From<Vec<u8>> for State {
+    fn from(serialized : Vec<u8>) -> Self {
+        rmps::from_slice(serialized.as_slice()).unwrap()
+    }
+}
+
 impl Into<Vec<u8>> for State {
     fn into(self) -> Vec<u8> {
         rmps::to_vec(&self).unwrap()
