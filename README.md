@@ -1,13 +1,12 @@
 # Locutus 
 
-[![Chat on Discord](https://img.shields.io/discord/917499817758978089?label=chat&logo=discord)](https://discord.gg/Q2FWzCqKQD)
-
+![Matrix](https://img.shields.io/matrix/freenet-locutus:matrix.org?label=matrix) [![Chat on Discord](https://img.shields.io/discord/917499817758978089?label=discord&logo=discord)](https://discord.gg/2kZuKNxYXv)
 
 The Internet has grown increasingly centralized over the past 25 years, such that a handful of companies now effectively control the Internet infrastructure. The public square is privately owned, threatening freedom of speech and democracy.
 
 Locutus is a software platform that makes it easy to create decentralized alternatives to today's centralized tech companies. These decentralized apps will be easy to use, scalable, and secured through cryptography.
 
-Build Locutus apps with familiar tools like [React](https://reactjs.org/) or [Vue.js](https://vuejs.org/), and can be "bridged" to the legacy centralized apps they replace.
+Build Locutus apps with familiar tools like [React](https://reactjs.org/) or [Vue.js](https://vuejs.org/).
 
 ### 1. Applications
 
@@ -55,7 +54,7 @@ Locutus is the development name for this software; it will probably change befor
 
 ### 6. Chat with us
 
-We're in [#locutus](https://discord.gg/2kZuKNxYXv) on Discord.
+We're in [#locutus](https://discord.gg/2kZuKNxYXv) on Discord, and also [#freenet-locutus](https://matrix.to/#/#freenet-locutus:matrix.org) on [Matrix](https://matrix.org/). These rooms are bridged so it doesn't matter which you join. If you have questions you can also [ask here](https://github.com/freenet/locutus/discussions).
 
 ### 7. Stay up to date
 

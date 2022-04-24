@@ -6,17 +6,18 @@ use std::{
 
 use itertools::Itertools;
 use libp2p::{identity, PeerId};
-use locutus_runtime::{Contract, ContractKey, ContractValue};
+use locutus_runtime::prelude::{ContractKey, ContractState};
 use rand::Rng;
 use tokio::sync::watch::{channel, Receiver, Sender};
+use tracing::{info, instrument};
 
 use crate::{
+    client_events::{test::MemoryEventsGen, ClientRequest},
     config::GlobalExecutor,
     contract::{MemoryContractHandler, SimStoreError},
     node::{event_listener::TestEventListener, InitPeerNode, NodeInMemory},
     ring::{Distance, Location, PeerKeyLocation},
-    user_events::{test::MemoryEventsGen, UserEvent},
-    NodeConfig,
+    Contract, NodeConfig,
 };
 
 use super::PeerKey;
@@ -59,9 +60,9 @@ pub(crate) type EventId = usize;
 #[derive(Clone)]
 pub(crate) struct NodeSpecification {
     /// Pair of contract and the initial value
-    pub owned_contracts: Vec<(Contract, ContractValue)>,
+    pub owned_contracts: Vec<(Contract, ContractState)>,
     pub non_owned_contracts: Vec<ContractKey>,
-    pub events_to_generate: HashMap<EventId, UserEvent>,
+    pub events_to_generate: HashMap<EventId, ClientRequest>,
     pub contract_subscribers: HashMap<ContractKey, Vec<PeerKeyLocation>>,
 }
 
@@ -101,7 +102,9 @@ impl SimNetwork {
         net
     }
 
+    #[instrument(skip(self))]
     fn build_gateways(&mut self, num: usize) {
+        info!("Building {} gateways", num);
         let mut configs = Vec::with_capacity(num);
         for node_no in 0..num {
             let label = format!("gateway-{}", node_no);
@@ -110,7 +113,7 @@ impl SimNetwork {
             let port = get_free_port().unwrap();
             let location = Location::random();
 
-            let mut config = NodeConfig::new();
+            let mut config = NodeConfig::new([Box::new(MemoryEventsGen::new_tmp())]);
             config
                 .with_ip(Ipv6Addr::LOCALHOST)
                 .with_port(port)
@@ -160,6 +163,7 @@ impl SimNetwork {
         }
     }
 
+    #[instrument(skip(self))]
     fn build_nodes(&mut self, num: usize) {
         let gateways: Vec<_> = self
             .gateways
@@ -173,7 +177,7 @@ impl SimNetwork {
             let pair = identity::Keypair::generate_ed25519();
             let id = pair.public().to_peer_id();
 
-            let mut config = NodeConfig::new();
+            let mut config = NodeConfig::new([Box::new(MemoryEventsGen::new_tmp())]);
             for GatewayConfig {
                 port, id, location, ..
             } in &gateways
@@ -267,7 +271,7 @@ impl SimNetwork {
         }
     }
 
-    pub fn has_put_contract(&self, peer: &str, key: &ContractKey, value: &ContractValue) -> bool {
+    pub fn has_put_contract(&self, peer: &str, key: &ContractKey, value: &ContractState) -> bool {
         if let Some(pk) = self.labels.get(peer) {
             self.event_listener.has_put_contract(pk, key, value)
         } else {

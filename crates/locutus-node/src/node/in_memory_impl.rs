@@ -1,22 +1,23 @@
 use std::{collections::HashMap, sync::Arc};
 
 use either::Either;
-use locutus_runtime::{Contract, ContractKey, ContractValue};
+use locutus_runtime::prelude::{ContractKey, ContractState};
 use tokio::sync::mpsc::{self, Receiver};
 
 use super::{
-    conn_manager::in_memory::MemoryConnManager, event_listener::EventListener, handle_cancelled_op,
-    join_ring_request, op_state::OpManager, process_message, user_event_handling, PeerKey,
+    client_event_handling, conn_manager::in_memory::MemoryConnManager,
+    event_listener::EventListener, handle_cancelled_op, join_ring_request, op_state::OpManager,
+    process_message, PeerKey,
 };
 use crate::{
+    client_events::ClientEventsProxy,
     config::GlobalExecutor,
     contract::{self, ContractError, ContractHandler, ContractHandlerEvent, SimStoreError},
     message::{Message, NodeEvent, TransactionType},
     operations::OpError,
     ring::{PeerKeyLocation, Ring},
-    user_events::UserEventsProxy,
     util::IterExt,
-    NodeConfig,
+    Contract, NodeConfig,
 };
 
 pub(super) struct NodeInMemory<CErr = SimStoreError> {
@@ -35,7 +36,7 @@ where
 {
     /// Buils an in-memory node. Does nothing upon construction,
     pub fn build<CH>(
-        config: NodeConfig,
+        config: NodeConfig<1>,
         event_listener: Option<Box<dyn EventListener + Send + Sync + 'static>>,
     ) -> Result<NodeInMemory<<CH as ContractHandler>::Error>, anyhow::Error>
     where
@@ -69,7 +70,7 @@ where
 
     pub async fn run_node<UsrEv>(&mut self, user_events: UsrEv) -> Result<(), anyhow::Error>
     where
-        UsrEv: UserEventsProxy + Send + Sync + 'static,
+        UsrEv: ClientEventsProxy + Send + Sync + 'static,
     {
         if !self.is_gateway {
             if let Some(gateway) = self.gateways.iter().shuffle().take(1).next() {
@@ -85,13 +86,13 @@ where
                 anyhow::bail!("requires at least one gateway");
             }
         }
-        GlobalExecutor::spawn(user_event_handling(self.op_storage.clone(), user_events));
+        GlobalExecutor::spawn(client_event_handling(self.op_storage.clone(), user_events));
         self.run_event_listener().await
     }
 
     pub async fn append_contracts(
         &self,
-        contracts: Vec<(Contract, ContractValue)>,
+        contracts: Vec<(Contract, ContractState)>,
         contract_subscribers: HashMap<ContractKey, Vec<PeerKeyLocation>>,
     ) -> Result<(), ContractError<CErr>> {
         for (contract, value) in contracts {

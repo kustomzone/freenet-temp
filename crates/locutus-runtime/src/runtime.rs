@@ -1,11 +1,14 @@
 use std::collections::HashMap;
 
-use locutus_stdlib::prelude::*;
+use locutus_stdlib::prelude::{
+    BufferBuilder, BufferMut, ContractKey, Parameters, State, StateDelta, StateSummary,
+    UpdateResult,
+};
 use wasmer::{
     imports, Bytes, ImportObject, Instance, Memory, MemoryType, Module, NativeFunc, Store,
 };
 
-use crate::{ContractKey, ContractRuntimeError, ContractStore, RuntimeResult};
+use crate::{contract_store::ContractStore, ContractRuntimeError, RuntimeResult};
 
 #[derive(thiserror::Error, Debug)]
 pub enum ExecError {
@@ -94,7 +97,7 @@ impl Runtime {
         unsafe {
             Ok(BufferMut::from_ptr(
                 builder_ptr as *mut BufferBuilder,
-                Some(memory.data_ptr()),
+                (memory.data_ptr() as _, memory.data_size()),
             ))
         }
     }
@@ -134,8 +137,11 @@ impl Runtime {
 
     #[cfg(not(test))]
     fn instance_store() -> Store {
-        use wasmer::Dylib;
-        Store::new(&Dylib::headless().engine())
+        // use wasmer::Dylib;
+        use wasmer::Universal;
+        use wasmer_compiler_llvm::LLVM;
+        // Store::new(&Dylib::headless().engine())
+        Store::new(&Universal::new(LLVM::new()).engine())
     }
 
     #[cfg(test)]
@@ -171,8 +177,8 @@ impl Runtime {
         Ok(instance)
     }
 
-    /// Determine whether this state is valid for this contract.
-    // when do we know we need to validate the whole state
+    /// Verify that the state is valid, given the parameters. This will be used before a peer
+    /// caches a new state.
     pub fn validate_state<'a>(
         &mut self,
         key: &ContractKey,
@@ -192,8 +198,9 @@ impl Runtime {
         Ok(is_valid)
     }
 
-    /// Determine whether this delta is valid for this contract.
-    // when do we know we need to validate only the delta
+    /// Verify that a delta is valid - at least as much as possible. The goal is to prevent DDoS of
+    /// a contract by sending a large number of invalid delta updates. This allows peers
+    /// to verify a delta before forwarding it.
     pub fn validate_delta<'a>(
         &mut self,
         key: &ContractKey,
@@ -240,27 +247,30 @@ impl Runtime {
         let mut delta_buf = self.init_buf(&instance, &delta)?;
         delta_buf.write(delta)?;
 
-        let validate_func: NativeFunc<(i64, i64), i32> =
+        let validate_func: NativeFunc<(i64, i64, i64), i32> =
             instance.exports.get_native_function("update_state")?;
-        let update_res = UpdateResult::try_from(
-            validate_func.call(param_buf.ptr() as i64, delta_buf.ptr() as i64)?,
-        )
+        let update_res = UpdateResult::try_from(validate_func.call(
+            param_buf.ptr() as i64,
+            state_buf.ptr() as i64,
+            delta_buf.ptr() as i64,
+        )?)
         .map_err(|_| ContractRuntimeError::from(ExecError::UnexpectedResult))?;
         match update_res {
             UpdateResult::ValidNoChange => Ok(state),
             UpdateResult::ValidUpdate => {
-                // fixme: potentially could require a resize of the state and invalidate
-                //        the previous ptr, take care of that with the builder
-                let mut state_buf = state_buf.flip_ownership();
-                // todo: get diff from buf and only then read and append if necessary
-                let new_state = state_buf.read_bytes(state.size());
+                let mut state_buf = state_buf.shared();
+                let new_state = state_buf.read_all();
+                eprintln!("new_state: {new_state:?}");
                 Ok(State::from(new_state.to_vec()))
             }
             UpdateResult::Invalid => Err(ExecError::InvalidPutValue.into()),
         }
     }
 
-    /// Used to communicate the current state to other nodes so they can keep track of.
+    /// Generate a concise summary of a state that can be used to create deltas
+    /// relative to this state.
+    ///
+    /// This allows flexible and efficient state synchronization between peers.
     pub fn summarize_state<'a>(
         &mut self,
         key: &ContractKey,
@@ -283,12 +293,15 @@ impl Runtime {
             .as_ref()
             .map(Ok)
             .unwrap_or_else(|| instance.exports.get_memory("memory"))?;
-        let summary_buf = unsafe { BufferMut::from_ptr(res_ptr, Some(memory.data_ptr())) };
+        let summary_buf =
+            unsafe { BufferMut::from_ptr(res_ptr, (memory.data_ptr() as _, memory.data_size())) };
         let summary: StateSummary = summary_buf.read_bytes(summary_buf.size()).into();
         Ok(StateSummary::from(summary.to_vec()))
     }
 
-    /// Used to return a delta to subscribers when there are updates.
+    /// Generate a state delta using a summary from the current state.
+    /// This along with [`Self::summarize_state`] allows flexible and efficient
+    /// state synchronization between peers.
     pub fn get_state_delta<'a>(
         &mut self,
         key: &ContractKey,
@@ -317,11 +330,13 @@ impl Runtime {
             .as_ref()
             .map(Ok)
             .unwrap_or_else(|| instance.exports.get_memory("memory"))?;
-        let delta_buf = unsafe { BufferMut::from_ptr(res_ptr, Some(memory.data_ptr())) };
+        let delta_buf =
+            unsafe { BufferMut::from_ptr(res_ptr, (memory.data_ptr() as _, memory.data_size())) };
         let delta = delta_buf.read_bytes(delta_buf.size());
         Ok(StateDelta::from(delta.to_owned()))
     }
 
+    /// Updates the current state from the provided summary.
     pub fn update_state_from_summary<'a>(
         &mut self,
         key: &ContractKey,
@@ -350,10 +365,7 @@ impl Runtime {
         match update_res {
             UpdateResult::ValidNoChange => Ok(current_state),
             UpdateResult::ValidUpdate => {
-                // fixme: potentially could require a resize of the state and invalidate
-                //        the previous ptr, take care of that with the builder
-                let mut state_buf = state_buf.flip_ownership();
-                // todo: get diff from buf and only then read and append if necessary
+                let mut state_buf = state_buf.shared();
                 let new_state = state_buf.read_bytes(current_state.size());
                 Ok(State::from(new_state.to_vec()))
             }
@@ -366,8 +378,9 @@ impl Runtime {
 mod test {
     use std::path::PathBuf;
 
+    use crate::contract::Contract;
+
     use super::*;
-    use crate::Contract;
 
     fn test_dir() -> PathBuf {
         let test_dir = std::env::temp_dir().join("locutus").join("contracts");
@@ -389,64 +402,35 @@ mod test {
         Contract::try_from(contract_path).expect("contract found")
     }
 
-    fn get_test_contract() -> RuntimeResult<(ContractStore, ContractKey)> {
+    fn get_guest_test_contract() -> RuntimeResult<(ContractStore, ContractKey)> {
         let mut store = ContractStore::new(test_dir(), 10_000);
-        let contract = test_contract("test_contract_guest.wasm");
+        let contract = test_contract("test_contract_guest.wasi.wasm");
         let key = contract.key();
         store.store_contract(contract)?;
         Ok((store, key))
     }
 
     #[test]
-    fn validate_compiled_with_guest_mem() -> Result<(), Box<dyn std::error::Error>> {
-        let (store, key) = get_test_contract()?;
-
+    fn update_state() -> Result<(), Box<dyn std::error::Error>> {
+        let (store, key) = get_guest_test_contract()?;
         let mut runtime = Runtime::build(store, false).unwrap();
-        // runtime.enable_wasi = true; // ENABLE FOR DEBUGGING; requires buding for wasi
-        let is_valid = runtime.validate_state(
+        runtime.enable_wasi = true; // ENABLE FOR DEBUGGING; requires building for wasi
+        let new_state = runtime.update_state(
             &key,
             Parameters::from([].as_ref()),
-            State::from([1, 2, 3, 4].as_ref()),
+            State::from([5, 2, 3].as_ref()),
+            StateDelta::from([4].as_ref()),
         )?;
-        assert!(is_valid);
-        let not_valid = !runtime.validate_state(
-            &key,
-            Parameters::from([].as_ref()),
-            State::from([1, 0, 0, 1].as_ref()),
-        )?;
-        assert!(not_valid);
-        Ok(())
-    }
-
-    #[test]
-    fn validate_compiled_with_host_mem() -> Result<(), Box<dyn std::error::Error>> {
-        let mut store = ContractStore::new(test_dir(), 10_000);
-        let contract = test_contract("test_contract_host.wasm");
-        let key = contract.key();
-        store.store_contract(contract)?;
-
-        let mut runtime = Runtime::build(store, true).unwrap();
-        // runtime.enable_wasi = true; // ENABLE FOR DEBUGGING; requires building for wasi
-        let is_valid = runtime.validate_state(
-            &key,
-            Parameters::from([].as_ref()),
-            State::from([1, 2, 3, 4].as_ref()),
-        )?;
-        assert!(is_valid);
-        let not_valid = !runtime.validate_state(
-            &key,
-            Parameters::from([].as_ref()),
-            State::from([1, 0, 0, 1].as_ref()),
-        )?;
-        assert!(not_valid);
+        assert!(new_state.as_ref().len() == 4);
+        assert!(new_state.as_ref()[3] == 4);
         Ok(())
     }
 
     #[test]
     fn summarize_state() -> Result<(), Box<dyn std::error::Error>> {
-        let (store, key) = get_test_contract()?;
+        let (store, key) = get_guest_test_contract()?;
         let mut runtime = Runtime::build(store, false).unwrap();
-        // runtime.enable_wasi = true; // ENABLE FOR DEBUGGING; requires building for wasi
+        runtime.enable_wasi = true; // ENABLE FOR DEBUGGING; requires building for wasi
         let summary = runtime.summarize_state(
             &key,
             Parameters::from([].as_ref()),

@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use locutus_runtime::ContractKey;
+use locutus_stdlib::prelude::ContractKey;
 
 use crate::{
     config::PEER_TIMEOUT,
@@ -685,13 +685,14 @@ mod messages {
 
 #[cfg(test)]
 mod test {
-    use locutus_runtime::{Contract, ContractValue};
+    use locutus_runtime::prelude::*;
 
     use crate::{
+        client_events::ClientRequest,
         contract::SimStoreError,
         node::test::{check_connectivity, NodeSpecification, SimNetwork},
         ring::Location,
-        user_events::UserEvent,
+        Contract,
     };
     use std::collections::HashMap;
 
@@ -705,7 +706,7 @@ mod test {
         let id = Transaction::new(<GetMsg as TxType>::tx_type_id(), &requester);
         let bytes = crate::util::test::random_bytes_1024();
         let mut gen = arbitrary::Unstructured::new(&bytes);
-        let contract: Contract = gen.arbitrary()?;
+        let contract: WrappedContract = gen.arbitrary()?;
         let target_loc = PeerKeyLocation {
             location: Some(Location::random()),
             peer: PeerKey::random(),
@@ -737,7 +738,7 @@ mod test {
                 id,
                 value: StoreResponse {
                     contract: Some(contract),
-                    value: Some(ContractValue::new(b"abc".to_vec())),
+                    value: Some(ContractState::new(b"abc".to_vec())),
                 },
                 sender: target_loc,
                 target: sender_loc,
@@ -760,10 +761,10 @@ mod test {
         let bytes = crate::util::test::random_bytes_1024();
         let mut gen = arbitrary::Unstructured::new(&bytes);
         let contract: Contract = gen.arbitrary()?;
-        let contract_val: ContractValue = gen.arbitrary()?;
+        let contract_val: ContractState = gen.arbitrary()?;
         let key = contract.key();
 
-        let get_event = UserEvent::Get {
+        let get_event = ClientRequest::Get {
             key,
             contract: true,
         };
@@ -810,7 +811,7 @@ mod test {
         let contract: Contract = gen.arbitrary()?;
         let key = contract.key();
 
-        let get_event = UserEvent::Get {
+        let get_event = ClientRequest::Get {
             key,
             contract: false,
         };
@@ -844,10 +845,10 @@ mod test {
         let bytes = crate::util::test::random_bytes_1024();
         let mut gen = arbitrary::Unstructured::new(&bytes);
         let contract: Contract = gen.arbitrary()?;
-        let contract_val: ContractValue = gen.arbitrary()?;
+        let contract_val: ContractState = gen.arbitrary()?;
         let key = contract.key();
 
-        let get_event = UserEvent::Get {
+        let get_event = ClientRequest::Get {
             key,
             contract: false,
         };
